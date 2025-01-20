@@ -1,61 +1,68 @@
+import tqdm
+
+from pyrep.backend.sim import *
+from pyrep.backend.simConst import *
+from pyrep.backend._sim_cffi import ffi, lib
+
 from typing import List
 
 import numpy as np
-import tqdm
 from ..simdata import SimObject, SimScene, SimTransform, SimVisual
 from ..simdata import SimMaterial, SimTexture, SimMesh
 from ..simdata import VisualType
-from ..core.log import logger
+# from ..core.log import logger
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
 
-def get_scene_obj_type_str(sim, obj_type_id: int):
+
+sim_handle_world = -1  # The world handle was not defined in PyRep SimConst
+
+def get_scene_obj_type_str(obj_type_id: int):
     # TODO, MAKE THIS A DICT
     # Get obj type name from obj type id
-    if obj_type_id == sim.sceneobject_shape:
+    if obj_type_id == sim_object_shape_type:
         return "shape"
-    if obj_type_id == sim.sceneobject_joint:
+    if obj_type_id == sim_object_joint_type:
         return "joint"
-    if obj_type_id == sim.sceneobject_graph:
+    if obj_type_id == sim_object_graph_type:
         return "graph"
-    if obj_type_id == sim.sceneobject_camera:
+    if obj_type_id == sim_object_camera_type:
         return "camera"
-    if obj_type_id == sim.sceneobject_light:
+    if obj_type_id == sim_object_light_type:
         return "light"
-    if obj_type_id == sim.sceneobject_dummy:
+    if obj_type_id == sim_object_dummy_type:
         return "dummy"
-    if obj_type_id == sim.sceneobject_proximitysensor:
+    if obj_type_id == sim_object_proximitysensor_type:
         return "proximitysensor"
-    if obj_type_id == sim.sceneobject_octree:
+    if obj_type_id == sim_object_octree_type:
         return "octree"
-    if obj_type_id == sim.sceneobject_pointcloud:
+    if obj_type_id == sim_object_pointcloud_type:
         return "pointcloud"
-    if obj_type_id == sim.sceneobject_visionsensor:
+    if obj_type_id == sim_object_visionsensor_type:
         return "visionsensor"
-    if obj_type_id == sim.sceneobject_forcesensor:
+    if obj_type_id == sim_object_forcesensor_type:
         return "forcesensor"
-    if obj_type_id == sim.sceneobject_script:
-        return "script"
     raise ValueError(f"Unknown object type id: {obj_type_id}")
 
 
-def get_primitive_type_str(sim, primitive_shape_id):
+def get_primitive_type_str(primitive_shape_id):
     # TODO, MAKE THIS A DICT
-    if primitive_shape_id == sim.primitiveshape_none:
+    if primitive_shape_id == sim_pure_primitive_none:
         return "none"
-    if primitive_shape_id == sim.primitiveshape_plane:
+    if primitive_shape_id == sim_pure_primitive_plane:
         return "plane"
-    if primitive_shape_id == sim.primitiveshape_disc:
+    if primitive_shape_id == sim_pure_primitive_disc:
         return "disc"
-    if primitive_shape_id == sim.primitiveshape_cuboid:
+    if primitive_shape_id == sim_pure_primitive_cuboid:
         return "cuboid"
-    if primitive_shape_id == sim.primitiveshape_spheroid:
+    if primitive_shape_id == sim_pure_primitive_spheroid:
         return "spheroid"
-    if primitive_shape_id == sim.primitiveshape_cylinder:
+    if primitive_shape_id == sim_pure_primitive_cylinder:
         return "cylinder"
-    if primitive_shape_id == sim.primitiveshape_cone:
+    if primitive_shape_id == sim_pure_primitive_cone:
         return "cone"
-    if primitive_shape_id == sim.primitiveshape_capsule:
-        return "capsule"
-    if primitive_shape_id == sim.primitiveshape_heightfield:
+    if primitive_shape_id == sim_pure_primitive_heightfield:
         return "heightfield"
     raise ValueError(f"Unknown primitive type: {primitive_shape_id}")
 
@@ -71,12 +78,12 @@ def get_bit_positions(number):
     return bit_positions
 
 
-def ungroup_compound_objects(sim, visual_layer_list):
+def ungroup_compound_objects(visual_layer_list, visual_keyword_list):
     # Exhaust flag
     flag = True
 
     # Get all objects id in a list.
-    objects_id_list = sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 0)
+    objects_id_list = simGetObjectsInTree(sim_handle_scene, sim_handle_all, 0)
 
     # Ungroup compound objects
     for idx in objects_id_list:
@@ -84,89 +91,145 @@ def ungroup_compound_objects(sim, visual_layer_list):
         # Check visualization
         visualize = False
         if visual_layer_list is not None:
-            obj_layers = get_bit_positions(sim.getIntProperty(idx, "layer"))
+            # fixme, the API does not exit
+            obj_layers = get_bit_positions(simGetModelProperty(idx, "layer"))
             if bool(set(visual_layer_list) & set(obj_layers)):
                 visualize = True
+            else:
+                visualize = False
+        elif visual_keyword_list is not None:
+            obj_name = simGetObjectName(idx)
+            # make the obj_name lowercase
+            if any(keyword.lower() in obj_name.lower()
+                   for keyword in visual_keyword_list):
+                visualize = True
+            else:
+                visualize = False
+        else:
+            visualize = True
 
         # Check object type
-        obj_type_id = sim.getObjectType(idx)
-        is_shape = get_scene_obj_type_str(sim, obj_type_id) == "shape"
+        obj_type_id = simGetObjectType(idx)
+        is_shape = get_scene_obj_type_str(obj_type_id) == "shape"
 
         # In case of a visual shape, Check if shape is compound
         if is_shape and visualize:
-            result = sim.getShapeGeomInfo(idx)[0]
+            # Official API:
+            int_data = ffi.new("int[5]")
+            floatData = ffi.new("float[5]")
+            void = ffi.NULL
+            result = lib.simGetShapeGeomInfo(idx, int_data, floatData, void)
             is_compound = bool(set(get_bit_positions(result)) & {0})
             if is_compound:
-                handles = sim.ungroupShape(idx)
+                print(simGetObjectName(idx))
+                handles = simUngroupShape(idx)
+                for h in handles:
+                    simSetObjectName(h, f"unity_viz{h}")
                 flag = False
     if not flag:
-        ungroup_compound_objects(sim, visual_layer_list)
+        ungroup_compound_objects(visual_layer_list, visual_keyword_list)
 
 
-def get_objects_info_dict(sim, visual_layer_list=None,
+def get_objects_info_dict(cs_sim, visual_layer_list=None,
+                          visual_keyword_list=None,
                           name_as_key=False):
     # Ungroup compound objects
-    ungroup_compound_objects(sim, visual_layer_list)
+    ungroup_compound_objects(visual_layer_list, visual_keyword_list)
 
-    objects_handle_list = (
-        sim.getObjectsInTree(sim.handle_scene, sim.handle_all, 0))
+    objects_id_list = simGetObjectsInTree(sim_handle_scene, sim_handle_all, 0)
 
     obj_info_dict = {}
 
     # tqdm progress bar
-    for idx in tqdm.tqdm(objects_handle_list):
-        obj_name = sim.getObjectAlias(idx)
+    for idx in tqdm.tqdm(objects_id_list):
+        obj_name = simGetObjectName(idx)
+
+        # print name and id
+        print(f"obj_name:{obj_name}, idx:{idx}")
+
         visualize = False
         if visual_layer_list is not None:
-            obj_layers = get_bit_positions(sim.getIntProperty(idx, "layer"))
+            # fixme, the API does not exit
+            obj_layers = get_bit_positions(simGetModelProperty(idx, "layer"))
             if bool(set(visual_layer_list) & set(obj_layers)):
                 visualize = True
-
-        parent_id = str(sim.getObjectParent(idx))
-        if parent_id == "-1":
+            else:
+                visualize = False
+        elif visual_keyword_list is not None:
+            obj_name = simGetObjectName(idx)
+            # make the obj_name lowercase
+            if any(keyword.lower() in obj_name.lower()
+                   for keyword in visual_keyword_list):
+                visualize = True
+            else:
+                visualize = False
+        else:
+            visualize = True
+        try:
+            parent_id = str(simGetObjectParent(idx))
+        except RuntimeError as e:
             parent_id = "world"
 
-        obj_type_id = sim.getObjectType(idx)
-        obj_type_str = get_scene_obj_type_str(sim, obj_type_id)
+        obj_type_id = simGetObjectType(idx)
+        obj_type_str = get_scene_obj_type_str(obj_type_id)
         idx_str = str(idx)
         obj_info_dict[idx_str] = {"name": obj_name,
                                   "parent_id": parent_id,
                                   "type": obj_type_str,
                                   "visualize": visualize}
 
-        # Check shape type, return types: int, int, list
         if obj_type_str == "shape" and visualize:
-            result, pureType, dimensions = sim.getShapeGeomInfo(idx)
-            primitive_type_str = get_primitive_type_str(sim, pureType)
-            vertices, indices, normals = sim.getShapeMesh(idx)
-            vertices = np.asarray(vertices).reshape(-1, 3)  # 5958
-            indices = np.asarray(indices).reshape(-1, 3)  # 11904
-            normals = np.asarray(normals).reshape(-1, 3)  # 35712
-            ambient_diffuse = sim.getShapeColor(
-                idx, None, sim.colorcomponent_ambient_diffuse)[1]
-            diffuse = sim.getShapeColor(
-                idx, None, sim.colorcomponent_diffuse)[1]
-            specular = sim.getShapeColor(
-                idx, None, sim.colorcomponent_specular)[1]
-            emission = sim.getShapeColor(
-                idx, None, sim.colorcomponent_emission)[1]
-            transparency = sim.getShapeColor(
-                idx, None, sim.colorcomponent_transparency)[1]
-            auxiliary = sim.getShapeColor(
-                idx, None, sim.colorcomponent_auxiliary)[1]
+            int_data = ffi.new("int[5]")
+            floatData = ffi.new("float[5]")
+            void = ffi.NULL
+            result = lib.simGetShapeGeomInfo(idx, int_data, floatData, void)
+            pureType = int_data[0]
+            dimensions = [floatData[0], floatData[1], floatData[2], floatData[3]] # x, y, z, scale
+            primitive_type_str = get_primitive_type_str(pureType)
+            vertices, indices, normals = simGetShapeMesh(idx)
 
-            texture_id = sim.getShapeTextureId(idx)
+            vertices = np.asarray(vertices).reshape(-1, 3)
+            indices = np.asarray(indices).reshape(-1, 3)
+            num_indices = len(indices)
+            normals = np.asarray(normals).reshape(num_indices, 3, 3) # fixme, this normal is not functioning
+            # normals = np.asarray(normals).reshape(3, num_indices, 3).swapaxes(0,1)
+            normals = normals.mean(axis=1)
+            # transfer indices_normals to face_normals
+
+            ambient_diffuse = simGetShapeColor(
+                idx, None, sim_colorcomponent_ambient_diffuse)
+            diffuse = simGetShapeColor(
+                idx, None, sim_colorcomponent_diffuse)
+            specular = simGetShapeColor(
+                idx, None, sim_colorcomponent_specular)
+            emission = simGetShapeColor(
+                idx, None, sim_colorcomponent_emission)
+            transparency = simGetShapeColor(
+                idx, None, sim_colorcomponent_transparency)
+            auxiliary = simGetShapeColor(
+                idx, None, sim_colorcomponent_auxiliary)
+
+            try:
+                texture_id = simGetShapeTextureId(idx)
+            except RuntimeError as e:
+                texture_id = -1
+
             if texture_id != -1:
-                mesh_id = sim.getProperty(idx, "meshes")[0]
-                texture_width, texture_height = (
-                    sim.getProperty(mesh_id, "textureResolution"))
-                texture_data = sim.readTexture(texture_id, 0)
-                texture_repeat_u = sim.getProperty(mesh_id, "textureRepeatU")
-                texture_repeat_v = sim.getProperty(mesh_id, "textureRepeatV")
+                shape_viz_info = simGetShapeViz(idx, 0)
+                texture_data = shape_viz_info.texture
+                textureRes = shape_viz_info.textureRes
+                texture_width = textureRes[0]
+                texture_height = textureRes[1]
+                texture_data = np.asarray(texture_data, dtype=np.uint8).reshape(
+                    texture_height, texture_width, 4)[..., :-1]
+                texture_coord = shape_viz_info.textureCoords
                 num_indices = len(indices)
-                texture_coord = sim.getProperty(mesh_id, "textureCoordinates")
                 texture_coord = np.asarray(texture_coord)
                 texture_coord = texture_coord.reshape(num_indices, -1)
+
+                texture_repeat_u = None
+                texture_repeat_v = None
+
             else:
                 texture_data = None
                 texture_width = None
@@ -198,12 +261,11 @@ def get_objects_info_dict(sim, visual_layer_list=None,
 
         # Get Transform info, absolute to world
         if parent_id == "world":
-            pos = sim.getObjectPosition(idx, sim.handle_world)
-            quat = sim.getObjectQuaternion(idx,
-                                           sim.handle_world)  # fixme, use quaternion?
+            pos = simGetObjectPosition(idx, sim_handle_world)
+            quat = simGetObjectQuaternion(idx, sim_handle_world)
         else:
-            pos = sim.getObjectPosition(idx, int(parent_id))
-            quat = sim.getObjectQuaternion(idx, int(parent_id))
+            pos = simGetObjectPosition(idx, int(parent_id))
+            quat = simGetObjectQuaternion(idx, int(parent_id))
         obj_info_dict[idx_str].update({
             "pos": pos,
             "quat": quat
@@ -240,10 +302,13 @@ def coppelia_sim2unity_quat(quat: List[float]) -> List[float]:
     return [quat[1], -quat[2], -quat[0], quat[3]]  # Vrep
 
 
-class CoppeliasSimParser:
-    def __init__(self, coppelia_sim, visual_layer_list):
+class CoppeliasSimPyRepParser:
+    def __init__(self, coppelia_sim, visual_layer_list, visual_keyword_list):
         self.sim_scene = None
         self.visual_layer_list = visual_layer_list
+        self.visual_keyword_list = visual_keyword_list
+        if visual_keyword_list is not None:
+            visual_keyword_list.append("unity_viz")
         self.parse_scene(coppelia_sim)
         self.sim_scene.process_sim_obj(self.sim_scene.root)
 
@@ -261,7 +326,7 @@ class CoppeliasSimParser:
 
         # Info dict
         info_dict_id_as_key = get_objects_info_dict(
-            cs_sim, self.visual_layer_list, name_as_key=False)
+            cs_sim, self.visual_layer_list, self.visual_keyword_list, name_as_key=False)
 
         # Build the hierarchy tree
         body_hierarchy = {}
@@ -289,6 +354,7 @@ class CoppeliasSimParser:
 
         # Create SimObject
         body_name = str(obj_id)
+        object_name = obj_info["name"]
         sim_object = SimObject(name=body_name)
 
         # Check parent
@@ -305,33 +371,34 @@ class CoppeliasSimParser:
         obj_type = obj_info["type"]
         obj_visualize = obj_info["visualize"]
 
+        # Fixme, floor is special
+        # if obj_type != "shape" or not obj_visualize or "Floor" in object_name:
         if obj_type != "shape" or not obj_visualize:
             return sim_object
         else:  # visual shape
 
-            # Process Material / Texture, fixme 3dim or 4dim?
+            # Process Material / Texture
             ambient_diffuse = obj_info["color_ambient_diffuse"]
             diffuse = obj_info["color_diffuse"]
             specular = obj_info["color_specular"]
-            emission = obj_info["color_emission"]  # todo, not used
+            emission = obj_info["color_emission"]
             transparency = obj_info["color_transparency"]
             auxiliary = obj_info["color_auxiliary"]
 
             # Texture
             texture_data = obj_info["texture_data"]
             if texture_data is not None:
-                texture_data = np.frombuffer(texture_data, dtype=np.uint8)
+                # texture_data = np.asarray(texture_data, dtype=np.uint8)
                 texture_width = obj_info["texture_width"]
                 texture_height = obj_info["texture_height"]
                 texture_repeat_u = obj_info["texture_repeat_u"]
                 texture_repeat_v = obj_info["texture_repeat_v"]
                 texture_coord = obj_info["texture_coord"]
                 mat_texture = SimTexture.create_texture(
-                    texture_data, texture_height,  # fixme, why height first?
+                    texture_data, texture_height,
                     texture_width, self.sim_scene)
                 mat_texture.textureScale = [1, 1]
-                # plt.imshow(texture_data.reshape(texture_height,
-                #                                 texture_width, 3))
+                plt.imshow(texture_data)
             else:
                 mat_texture = None
                 texture_coord = None
@@ -363,7 +430,7 @@ class CoppeliasSimParser:
                 scene=self.sim_scene,
                 vertices=vertices,
                 faces=indices,
-                # vertex_normals=normals,
+                face_normals=normals,
                 # mesh_texcoord=texture_coord, # Fixme, texture details?
                 faces_uv=texture_coord,
             )

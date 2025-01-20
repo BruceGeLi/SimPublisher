@@ -1,18 +1,16 @@
 import numpy as np
 
 from ..parser.coppelia_sim import CoppeliasSimParser
+from ..parser.coppelia_sim_pyrep import CoppeliasSimPyRepParser
 from ..simdata import SimObject, SimScene, SimTransform, SimVisual
 from ..simdata import SimMaterial, SimTexture, SimMesh
 from ..simdata import VisualType
 from ..core.log import logger
 
-
-from mujoco import mj_name2id, mjtObj
 from typing import List, Dict, Tuple, Optional
 import numpy as np
 
 from ..core.simpub_server import SimPublisher
-from ..parser.mj import MjModelParser
 from ..simdata import SimObject
 
 
@@ -24,11 +22,16 @@ class CoppeliaSimPublisher(SimPublisher):
         no_rendered_objects: Optional[List[str]] = None,
         no_tracked_objects: Optional[List[str]] = None,
         visual_layer_list: Optional[List[int]] = None,
+        visual_keyword_list: Optional[List[str]] = None,
+        use_pyrep: bool = False,
     ) -> None:
         # self.mj_model = mj_model
         # self.mj_data = mj_data
         self.sim = sim
-        self.parser = CoppeliasSimParser(sim, visual_layer_list)
+        if not use_pyrep:
+            self.parser = CoppeliasSimParser(sim, visual_layer_list, visual_keyword_list)
+        else:
+            self.parser = CoppeliasSimPyRepParser(sim, visual_layer_list, visual_keyword_list)
         sim_scene = self.parser.parse()
 
         self.tracked_obj_trans: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
