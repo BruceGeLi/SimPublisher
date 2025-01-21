@@ -43,6 +43,13 @@ def get_scene_obj_type_str(obj_type_id: int):
         return "visionsensor"
     if obj_type_id == sim_object_forcesensor_type:
         return "forcesensor"
+    if obj_type_id == sim_object_path_type:
+        return "path"
+    if obj_type_id == sim_object_mill_type:
+        return "mill"
+    if obj_type_id == sim_object_mirror_type:
+        return "mirror"
+    print("")
     raise ValueError(f"Unknown object type id: {obj_type_id}")
 
 
@@ -100,7 +107,7 @@ def ungroup_compound_objects(visual_layer_list, visual_keyword_list):
         elif visual_keyword_list is not None:
             obj_name = simGetObjectName(idx)
             # make the obj_name lowercase
-            if any(keyword.lower() in obj_name.lower()
+            if any(keyword.lower() in obj_name.lower() and "floor" not in obj_name.lower()
                    for keyword in visual_keyword_list):
                 visualize = True
             else:
@@ -158,7 +165,7 @@ def get_objects_info_dict(cs_sim, visual_layer_list=None,
         elif visual_keyword_list is not None:
             obj_name = simGetObjectName(idx)
             # make the obj_name lowercase
-            if any(keyword.lower() in obj_name.lower()
+            if any(keyword.lower() in obj_name.lower() and "floor" not in obj_name.lower()
                    for keyword in visual_keyword_list):
                 visualize = True
             else:
@@ -178,7 +185,7 @@ def get_objects_info_dict(cs_sim, visual_layer_list=None,
                                   "type": obj_type_str,
                                   "visualize": visualize}
 
-        if obj_type_str == "shape" and visualize:
+        if obj_type_str == "shape" and visualize and "floor" not in obj_name.lower():
             int_data = ffi.new("int[5]")
             floatData = ffi.new("float[5]")
             void = ffi.NULL
@@ -373,7 +380,7 @@ class CoppeliasSimPyRepParser:
 
         # Fixme, floor is special
         # if obj_type != "shape" or not obj_visualize or "Floor" in object_name:
-        if obj_type != "shape" or not obj_visualize:
+        if "floor" in body_name.lower() or obj_type != "shape" or not obj_visualize:
             return sim_object
         else:  # visual shape
 
